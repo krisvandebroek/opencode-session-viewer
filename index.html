@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenCode Session Viewer</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f3f4f6; color: #1f2937; margin: 0; height: 100vh; overflow: hidden; }
+        .markdown-body pre { background-color: #1e1e1e; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; color: #d4d4d4; }
+        .markdown-body code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.875em; }
+        .markdown-body p, .markdown-body ul, .markdown-body ol { margin-bottom: 1rem; }
+        .markdown-body ul { list-style-type: disc; padding-left: 1.5rem; }
+        .markdown-body ol { list-style-type: decimal; padding-left: 1.5rem; }
+        .markdown-body a { color: #2563eb; text-decoration: underline; }
+        .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 { font-weight: 600; margin-top: 1.5rem; margin-bottom: 0.75rem; }
+        .markdown-body h1 { font-size: 1.5rem; }
+        .markdown-body h2 { font-size: 1.25rem; }
+        .markdown-body h3 { font-size: 1.125rem; }
+        
+        /* Custom scrollbar */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        .diff-add { background-color: #dcfce7; color: #166534; }
+        .diff-remove { background-color: #fee2e2; color: #991b1b; }
+        
+        [v-cloak] { display: none; }
+    </style>
+</head>
+<body>
+    <div id="app" v-cloak class="h-full flex flex-col">
+        <!-- Upload State -->
+        <div v-if="!session" class="flex-1 flex flex-col items-center justify-center p-8 text-center border-2 border-dashed border-gray-300 m-8 rounded-xl bg-white transition-colors"
+             @dragover.prevent="dragOver = true" @dragleave.prevent="dragOver = false" @drop.prevent="handleDrop"
+             :class="{ 'border-blue-500 bg-blue-50': dragOver }">
+            <i data-lucide="file-json" class="w-16 h-16 text-gray-400 mb-4"></i>
+            <h2 class="text-2xl font-bold mb-2">OpenCode Session Viewer</h2>
+            <p class="text-gray-500 mb-6">Drag and drop your @session.json file here, or click to browse.</p>
+            <input type="file" ref="fileInput" @change="handleFileSelect" accept=".json" class="hidden">
+            <button @click="$refs.fileInput.click()" class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-colors">
+                Select File
+            </button>
+        </div>
+
+        <!-- Viewer State -->
+        <div v-else class="flex-1 flex flex-col h-full overflow-hidden">
+            <!-- Header -->
+            <header class="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between shadow-sm z-10 shrink-0">
+                <div>
+                    <h1 class="text-xl font-bold flex items-center gap-2">
+                        <i data-lucide="terminal-square" class="w-5 h-5 text-blue-600"></i>
+                        {{ session.info?.title || 'Untitled Session' }}
+                    </h1>
+                    <div class="text-sm text-gray-500 mt-1 flex items-center gap-4">
+                        <span title="Directory"><i data-lucide="folder" class="w-3 h-3 inline mr-1"></i>{{ session.info?.directory }}</span>
+                        <span title="Version"><i data-lucide="tag" class="w-3 h-3 inline mr-1"></i>{{ session.info?.version }}</span>
+                        <span><i data-lucide="clock" class="w-3 h-3 inline mr-1"></i>{{ formatDate(session.info?.time?.created) }}</span>
+                    </div>
+                </div>
+                <div class="flex items-center gap-4 text-sm">
+                    <div class="bg-gray-100 px-3 py-1.5 rounded-md flex items-center gap-2">
+                        <i data-lucide="coins" class="w-4 h-4 text-yellow-600"></i>
+                        <span class="font-medium">${{ totalCost.toFixed(4) }}</span>
+                    </div>
+                    <div class="bg-gray-100 px-3 py-1.5 rounded-md flex items-center gap-2">
+                        <i data-lucide="cpu" class="w-4 h-4 text-purple-600"></i>
+                        <span class="font-medium">{{ formatNumber(totalTokens) }} tokens</span>
+                    </div>
+                    <button @click="reset" class="p-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors" title="Close Session">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Main Content -->
+            <div class="flex-1 flex overflow-hidden">
+                
+                <!-- Sidebar -->
+                <div class="w-64 bg-gray-50 border-r border-gray-200 flex flex-col overflow-y-auto shrink-0">
+                    <div class="p-4 border-b border-gray-200 bg-white sticky top-0">
+                        <h3 class="font-semibold text-gray-700">Timeline</h3>
+                        <div class="flex items-center gap-2 mt-2 text-xs text-gray-500">
+                            <span class="text-green-600">+{{ session.info?.summary?.additions || 0 }}</span>
+                            <span class="text-red-600">-{{ session.info?.summary?.deletions || 0 }}</span>
+                            <span>{{ session.info?.summary?.files || 0 }} files changed</span>
+                        </div>
+                    </div>
+                    <div class="p-2 space-y-1">
+                        <a v-for="(msg, idx) in session.messages" :key="msg.info?.id || idx" :href="'#msg-' + msg.info?.id" 
+                           class="block px-3 py-2 rounded-md text-sm hover:bg-gray-200 transition-colors"
+                           :class="msg.info?.role === 'user' ? 'border-l-4 border-blue-500' : 'border-l-4 border-purple-500'">
+                            <div class="flex justify-between items-center mb-1">
+                                <span class="font-medium capitalize">{{ msg.info?.role }}</span>
+                                <span class="text-xs text-gray-400">{{ formatTime(msg.info?.time?.created) }}</span>
+                            </div>
+                            <div class="text-xs text-gray-500 truncate" v-if="msg.info?.role === 'user'">
+                                {{ getSnippet(msg) }}
+                            </div>
+                            <div class="text-xs text-gray-500 flex gap-2" v-else>
+                                <span>{{ msg.info?.agent || 'assistant' }}</span>
+                                <span v-if="msg.info?.tokens?.total" class="text-gray-400">{{ formatNumber(msg.info.tokens.total) }}t</span>
+                            </div>
+                        </a>
+                    </div>
+                </div>
+
+                <!-- Chat Area -->
+                <div class="flex-1 overflow-y-auto p-6 bg-white scroll-smooth" id="chat-container">
+                    <div class="max-w-4xl mx-auto space-y-8 pb-12">
+                        <div v-for="msg in session.messages" :key="msg.info?.id" :id="'msg-' + msg.info?.id" class="flex gap-4">
+                            
+                            <!-- Avatar -->
+                            <div class="shrink-0 pt-1">
+                                <div v-if="msg.info?.role === 'user'" class="w-10 h-10 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center">
+                                    <i data-lucide="user" class="w-6 h-6"></i>
+                                </div>
+                                <div v-else class="w-10 h-10 bg-purple-100 text-purple-600 rounded-full flex items-center justify-center">
+                                    <i data-lucide="bot" class="w-6 h-6"></i>
+                                </div>
+                            </div>
+
+                            <!-- Message Content -->
+                            <div class="flex-1 min-w-0">
+                                <div class="flex items-baseline gap-2 mb-2">
+                                    <span class="font-bold text-gray-900 capitalize">{{ msg.info?.role }}</span>
+                                    <span class="text-xs text-gray-500">{{ formatTime(msg.info?.time?.created) }}</span>
+                                    
+                                    <template v-if="msg.info?.role === 'assistant'">
+                                        <span class="text-xs px-2 py-0.5 bg-gray-100 text-gray-600 rounded-full border border-gray-200">
+                                            {{ msg.info?.model?.modelID || 'unknown model' }}
+                                        </span>
+                                        <span v-if="msg.info?.cost" class="text-xs text-gray-500" title="Cost">
+                                            ${{ msg.info.cost.toFixed(4) }}
+                                        </span>
+                                        <span v-if="msg.info?.tokens?.total" class="text-xs text-gray-500" title="Tokens">
+                                            {{ formatNumber(msg.info.tokens.total) }}t
+                                        </span>
+                                    </template>
+                                </div>
+
+                                <div class="space-y-4">
+                                    <!-- Render Parts -->
+                                    <template v-for="(part, idx) in (msg.parts || [])" :key="part.id || idx">
+                                        
+                                        <!-- Text / Synthetic Text -->
+                                        <div v-if="part.type === 'text'" :class="{'opacity-75 bg-gray-50 p-4 rounded-lg border border-gray-100 text-sm': part.synthetic}">
+                                            <div v-if="part.synthetic" class="flex items-center gap-2 mb-2 text-gray-500 font-medium text-xs uppercase tracking-wider">
+                                                <i data-lucide="info" class="w-3 h-3"></i> System Context
+                                            </div>
+                                            <!-- Skill prompt formatting -->
+                                            <template v-if="parseSkillText(part.text).isSkill">
+                                                <details class="mb-4 bg-gray-50 border border-gray-200 rounded-lg overflow-hidden group text-sm">
+                                                    <summary class="px-4 py-2 cursor-pointer text-gray-700 font-medium hover:bg-gray-100 flex items-center gap-2 select-none">
+                                                        <i data-lucide="file-text" class="w-4 h-4 text-gray-500"></i>
+                                                        <span>Injected {{ parseSkillText(part.text).skillName }}</span>
+                                                        <i data-lucide="chevron-down" class="w-4 h-4 ml-auto transition-transform group-open:rotate-180"></i>
+                                                    </summary>
+                                                    <div class="p-4 border-t border-gray-200 bg-white">
+                                                        <div class="markdown-body text-xs text-gray-600" v-html="renderMarkdown(parseSkillText(part.text).skillHeader)"></div>
+                                                    </div>
+                                                </details>
+                                                <div class="markdown-body" v-html="renderMarkdown(parseSkillText(part.text).userPrompt)"></div>
+                                            </template>
+                                            <template v-else>
+                                                <div class="markdown-body" v-html="renderMarkdown(part.text)"></div>
+                                            </template>
+                                        </div>
+
+                                        <!-- Reasoning -->
+                                        <details v-else-if="part.type === 'reasoning'" class="bg-indigo-50/50 border border-indigo-100 rounded-lg overflow-hidden group">
+                                            <summary class="px-4 py-2 cursor-pointer text-indigo-700 text-sm font-medium hover:bg-indigo-50 flex items-center gap-2 select-none">
+                                                <i data-lucide="brain" class="w-4 h-4"></i> Reasoning
+                                                <i data-lucide="chevron-down" class="w-4 h-4 ml-auto transition-transform group-open:rotate-180"></i>
+                                            </summary>
+                                            <div class="p-4 border-t border-indigo-100 text-sm text-gray-700 bg-white">
+                                                <div class="markdown-body" v-html="renderMarkdown(part.text)"></div>
+                                            </div>
+                                        </details>
+
+                                        <!-- Tool Call -->
+                                        <div v-else-if="part.type === 'tool'" class="border border-gray-200 rounded-lg overflow-hidden bg-gray-50">
+                                            <div class="px-4 py-2 border-b border-gray-200 bg-gray-100 flex items-center gap-2 cursor-pointer hover:bg-gray-200 transition-colors" @click="toggleTool(part.callID)">
+                                                <i data-lucide="wrench" class="w-4 h-4 text-gray-600"></i>
+                                                <span class="font-medium text-sm text-gray-800">Tool: {{ part.tool }}</span>
+                                                <span v-if="part.state?.status === 'completed'" class="ml-2 text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full">Completed</span>
+                                                <span v-else-if="part.state?.status === 'error'" class="ml-2 text-xs px-2 py-0.5 bg-red-100 text-red-700 rounded-full">Error</span>
+                                                <span v-if="part.state?.title" class="ml-2 text-xs text-gray-500 truncate max-w-sm">{{ part.state.title }}</span>
+                                                <i data-lucide="chevron-down" class="w-4 h-4 ml-auto text-gray-500 transition-transform" :class="{'rotate-180': openTools[part.callID]}"></i>
+                                            </div>
+                                            <div v-show="openTools[part.callID]" class="p-4 space-y-4">
+                                                <div>
+                                                    <div class="text-xs font-semibold text-gray-500 uppercase mb-1">Input</div>
+                                                    <pre class="bg-gray-800 text-gray-100 p-3 rounded-md text-sm overflow-x-auto"><code>{{ formatJSON(part.state?.input) }}</code></pre>
+                                                </div>
+                                                <div v-if="part.state?.output">
+                                                    <div class="text-xs font-semibold text-gray-500 uppercase mb-1">Output</div>
+                                                    <pre class="bg-gray-800 text-gray-100 p-3 rounded-md text-sm overflow-x-auto"><code>{{ part.state.output }}</code></pre>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <!-- File Attachment -->
+                                        <div v-else-if="part.type === 'file'" class="flex items-center gap-3 p-3 rounded-lg border border-gray-200 bg-gray-50">
+                                            <div class="w-10 h-10 rounded bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
+                                                <i data-lucide="file" class="w-5 h-5"></i>
+                                            </div>
+                                            <div class="flex-1 min-w-0">
+                                                <div class="text-sm font-medium text-gray-900 truncate" :title="part.filename">{{ part.filename }}</div>
+                                                <div class="text-xs text-gray-500">{{ part.mime }}</div>
+                                            </div>
+                                        </div>
+
+                                        <!-- Patch -->
+                                        <div v-else-if="part.type === 'patch'" class="border border-gray-200 rounded-lg overflow-hidden bg-gray-50">
+                                            <div class="px-4 py-2 border-b border-gray-200 bg-gray-100 flex items-center gap-2">
+                                                <i data-lucide="file-diff" class="w-4 h-4 text-gray-600"></i>
+                                                <span class="font-medium text-sm text-gray-800">Patch Applied</span>
+                                            </div>
+                                            <div class="p-0 overflow-x-auto bg-[#1e1e1e] text-[#d4d4d4] text-xs">
+                                                <ul class="m-0 p-3 list-none">
+                                                    <li v-for="file in part.files" class="text-blue-300 font-mono">{{ file }}</li>
+                                                </ul>
+                                            </div>
+                                        </div>
+
+                                        <!-- Diff / Patch Information in Summary -->
+                                        <div v-if="part.type === 'step-finish' && msg.info?.summary?.diffs?.length > 0" class="mt-4">
+                                            <div class="text-xs font-semibold text-gray-500 uppercase mb-2">Code Changes</div>
+                                            <div class="space-y-3">
+                                                <div v-for="diff in msg.info?.summary?.diffs" class="border border-gray-200 rounded-lg overflow-hidden">
+                                                    <div class="bg-gray-50 px-3 py-2 border-b border-gray-200 flex justify-between items-center text-sm font-mono text-gray-700">
+                                                        <span class="truncate">{{ diff.file }}</span>
+                                                        <div class="flex gap-2 shrink-0 ml-4 text-xs">
+                                                            <span class="text-green-600" v-if="diff.additions">+{{ diff.additions }}</span>
+                                                            <span class="text-red-600" v-if="diff.deletions">-{{ diff.deletions }}</span>
+                                                        </div>
+                                                    </div>
+                                                    <div class="p-0 overflow-x-auto bg-[#1e1e1e] text-[#d4d4d4] text-xs">
+                                                        <pre class="m-0 p-3"><code>{{ diff.patch }}</code></pre>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                    </template>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, computed, nextTick } = Vue;
+
+        // Configure marked to use highlight.js
+        marked.setOptions({
+            highlight: function(code, lang) {
+                const language = hljs.getLanguage(lang) ? lang : 'plaintext';
+                return hljs.highlight(code, { language }).value;
+            },
+            langPrefix: 'hljs language-'
+        });
+
+        createApp({
+            setup() {
+                const session = ref(null);
+                const dragOver = ref(false);
+                const openTools = ref({});
+
+                const totalCost = computed(() => {
+                    if (!session.value || !session.value.messages) return 0;
+                    return session.value.messages.reduce((acc, msg) => acc + (msg.info?.cost || 0), 0);
+                });
+
+                const totalTokens = computed(() => {
+                    if (!session.value || !session.value.messages) return 0;
+                    return session.value.messages.reduce((acc, msg) => acc + (msg.info?.tokens?.total || 0), 0);
+                });
+
+                const handleDrop = (e) => {
+                    dragOver.value = false;
+                    const file = e.dataTransfer.files[0];
+                    if (file && file.name.endsWith('.json')) {
+                        readFile(file);
+                    } else {
+                        alert('Please drop a valid .json session file.');
+                    }
+                };
+
+                const handleFileSelect = (e) => {
+                    const file = e.target.files[0];
+                    if (file) {
+                        readFile(file);
+                    }
+                };
+
+                const readFile = (file) => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        try {
+                            const data = JSON.parse(e.target.result);
+                            if (data.info && Array.isArray(data.messages)) {
+                                session.value = data;
+                                // Initialize all tools to closed
+                                data.messages.forEach(msg => {
+                                    (msg.parts || []).forEach(part => {
+                                        if (part.type === 'tool' && part.callID) {
+                                            openTools.value[part.callID] = false;
+                                        }
+                                    });
+                                });
+                                nextTick(() => {
+                                    lucide.createIcons();
+                                    // Make sure highlight.js runs on newly rendered markdown
+                                    document.querySelectorAll('pre code:not(.hljs)').forEach((block) => {
+                                        hljs.highlightElement(block);
+                                    });
+                                });
+                            } else {
+                                alert('Invalid session file format. Missing "info" or "messages".');
+                            }
+                        } catch (err) {
+                            alert('Failed to parse JSON: ' + err.message);
+                        }
+                    };
+                    reader.readAsText(file);
+                };
+
+                const reset = () => {
+                    session.value = null;
+                };
+
+                const renderMarkdown = (text) => {
+                    if (!text) return '';
+                    return marked.parse(text);
+                };
+
+                const formatJSON = (obj) => {
+                    if (!obj) return '';
+                    if (typeof obj === 'string') return obj;
+                    return JSON.stringify(obj, null, 2);
+                };
+
+                const formatDate = (ts) => {
+                    if (!ts) return '';
+                    return new Date(ts).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                };
+
+                const formatTime = (ts) => {
+                    if (!ts) return '';
+                    return new Date(ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                };
+
+                const formatNumber = (num) => {
+                    if (!num) return '0';
+                    return new Intl.NumberFormat().format(num);
+                };
+
+                const parseSkillText = (text) => {
+                    if (!text) return { isSkill: false, skillHeader: '', userPrompt: '' };
+                    
+                    const whatToDoStart = text.indexOf('<what-to-do>');
+                    const supportingInfoEnd = text.indexOf('</supporting-info>');
+                    
+                    if (whatToDoStart !== -1 && supportingInfoEnd !== -1) {
+                        const skillHeaderEndIdx = supportingInfoEnd + '</supporting-info>'.length;
+                        let skillHeader = text.substring(whatToDoStart, skillHeaderEndIdx);
+                        let userPrompt = text.substring(skillHeaderEndIdx).trim();
+                        
+                        const lines = userPrompt.split('\n');
+                        let metaLinesCount = 0;
+                        for (let i = 0; i < lines.length; i++) {
+                            const line = lines[i].trim();
+                            if (line === '') {
+                                continue;
+                            }
+                            if (line.startsWith('Base directory for this skill:') || 
+                                line.startsWith('Relative paths in this skill') ||
+                                line.startsWith('Note: file list is sampled.') ||
+                                line.startsWith('<skill_files>') ||
+                                line.startsWith('</skill_files>') ||
+                                line.startsWith('<file>') ||
+                                line.startsWith('</file>') ||
+                                line.includes('.config/opencode/skill/') ||
+                                line.includes('.opencode/skills/')) {
+                                metaLinesCount = i + 1;
+                            } else {
+                                break;
+                            }
+                        }
+                        
+                        if (metaLinesCount > 0) {
+                            const metaHeader = lines.slice(0, metaLinesCount).join('\n');
+                            skillHeader += '\n' + metaHeader;
+                            userPrompt = lines.slice(metaLinesCount).join('\n').trim();
+                        }
+                        
+                        let skillName = 'Skill Instructions';
+                        const nameMatch = skillHeader.match(/# Skill:\s*([^\s\n]+)/) || skillHeader.match(/name="([^"]+)"/);
+                        if (nameMatch) {
+                            skillName = `Skill: ${nameMatch[1]}`;
+                        } else {
+                            const baseDirMatch = skillHeader.match(/Base directory for this skill:\s*([^\n]+)/);
+                            if (baseDirMatch) {
+                                const parts = baseDirMatch[1].trim().split(/[/\\]/);
+                                const lastPart = parts[parts.length - 1];
+                                if (lastPart) {
+                                    skillName = `Skill: ${lastPart}`;
+                                }
+                            }
+                        }
+                        
+                        return { isSkill: true, skillName, skillHeader, userPrompt };
+                    }
+                    
+                    return { isSkill: false, skillHeader: '', userPrompt: text };
+                };
+
+                const getSnippet = (msg) => {
+                    if (!msg || !msg.parts) return 'No text content';
+                    const textPart = msg.parts.find(p => p.type === 'text' && !p.synthetic);
+                    if (textPart && textPart.text) {
+                        const parsed = parseSkillText(textPart.text);
+                        return parsed.userPrompt.replace(/\n/g, ' ');
+                    }
+                    return 'No text content';
+                };
+
+                const toggleTool = (id) => {
+                    openTools.value[id] = !openTools.value[id];
+                };
+
+                return {
+                    session,
+                    dragOver,
+                    openTools,
+                    totalCost,
+                    totalTokens,
+                    handleDrop,
+                    handleFileSelect,
+                    reset,
+                    renderMarkdown,
+                    formatJSON,
+                    formatDate,
+                    formatTime,
+                    formatNumber,
+                    getSnippet,
+                    toggleTool,
+                    parseSkillText
+                };
+            },
+            mounted() {
+                lucide.createIcons();
+            },
+            updated() {
+                lucide.createIcons();
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
