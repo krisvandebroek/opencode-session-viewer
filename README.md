@@ -28,3 +28,12 @@ To activate deployment for your repository:
 Once deployed, the session viewer will be publicly accessible at:
 
 **[https://krisvandebroek.github.io/opencode-session-viewer/](https://krisvandebroek.github.io/opencode-session-viewer/)**
+
+## Security & Privacy
+
+- All session JSON processing is done strictly client-side in your browser. No session data is uploaded to any server or backend.
+- See [SECURITY.md](SECURITY.md) for vulnerability reporting guidelines.
+
+## License
+
+[MIT License](LICENSE) © 2026 Kris Vandebroek

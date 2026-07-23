@@ -1,0 +1,24 @@
+# macOS
+.DS_Store
+
+# Session files & test data
+*.json
+!package.json
+
+# Local environment & secret files
+.env*
+*.env
+
+# IDE / Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node / Build artifacts (if added in future)
+node_modules/
+dist/
+.cache/
+
+# Logs
+*.log
